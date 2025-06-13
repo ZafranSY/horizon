@@ -22,15 +22,26 @@ import {
   Bot,
   Loader2,
   RefreshCw,
+  Volume2,
+  Image as ImageIcon,
+  Download,
 } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
-import { streamText } from "ai"
-import { openai } from "@ai-sdk/openai"
 
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
+  imageUrl?: string
+  audioUrl?: string
+  timestamp: Date
+}
+
+interface AnalysisResponse {
+  summary: string
+  imageUrl?: string
+  audioUrl?: string
+  error?: string
 }
 
 export default function AssistantPage() {
@@ -43,11 +54,13 @@ export default function AssistantPage() {
       id: "welcome",
       role: "assistant",
       content:
-        "Hello! I'm your Horizon AI financial assistant. How can I help you with financial markets in Malaysia today?",
+        "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. What would you like to know?",
+      timestamp: new Date(),
     },
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [audioElements, setAudioElements] = useState<{[key: string]: HTMLAudioElement}>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -110,52 +123,65 @@ export default function AssistantPage() {
       id: Date.now().toString(),
       role: "user",
       content: input,
+      timestamp: new Date(),
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const currentInput = input
     setInput("")
     setIsLoading(true)
 
-    // Create a placeholder for the assistant's response
-    const assistantMessageId = (Date.now() + 1).toString()
-    setMessages((prev) => [...prev, { id: assistantMessageId, role: "assistant", content: "" }])
-
     try {
-      let fullResponse = ""
-
-      // Use AI SDK to stream the response
-      const result = streamText({
-        model: openai("gpt-4o"),
-        prompt: input,
-        system:
-          "You are Horizon AI, a financial assistant specializing in Malaysian financial markets. You provide concise, accurate information about stocks, economic indicators, and market trends in Malaysia. You should be helpful, informative, and focus on providing actionable insights. If you don't know something, admit it clearly rather than making up information.",
-        onChunk: ({ chunk }) => {
-          if (chunk.type === "text-delta") {
-            fullResponse += chunk.text
-
-            // Update the assistant's message with the streamed content
-            setMessages((prev) =>
-              prev.map((msg) => (msg.id === assistantMessageId ? { ...msg, content: fullResponse } : msg)),
-            )
-          }
+      // Call your backend API
+      const response = await fetch('http://localhost:3001/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ query: currentInput }),
       })
 
-      await result.text
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data: AnalysisResponse = await response.json()
+
+      if (data.error) {
+        throw new Error(data.error)
+      }
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: data.summary,
+        imageUrl: data.imageUrl,
+        audioUrl: data.audioUrl,
+        timestamp: new Date(),
+      }
+
+      setMessages((prev) => [...prev, assistantMessage])
+
+      // Preload audio if available
+      if (data.audioUrl) {
+        const audio = new Audio(data.audioUrl)
+        setAudioElements(prev => ({
+          ...prev,
+          [assistantMessage.id]: audio
+        }))
+      }
+
     } catch (error) {
       console.error("Error generating response:", error)
+      
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running on http://localhost:3001 and try again.`,
+        timestamp: new Date(),
+      }
 
-      // Update with error message
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? {
-                ...msg,
-                content: "Sorry, I encountered an error while generating a response. Please try again.",
-              }
-            : msg,
-        ),
-      )
+      setMessages((prev) => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
     }
@@ -167,9 +193,45 @@ export default function AssistantPage() {
         id: "welcome",
         role: "assistant",
         content:
-          "Hello! I'm your Horizon AI financial assistant. How can I help you with financial markets in Malaysia today?",
+          "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. What would you like to know?",
+        timestamp: new Date(),
       },
     ])
+    setAudioElements({})
+  }
+
+  const playAudio = (messageId: string) => {
+    const audio = audioElements[messageId]
+    if (audio) {
+      if (audio.paused) {
+        audio.play()
+      } else {
+        audio.pause()
+        audio.currentTime = 0
+      }
+    }
+  }
+
+  const downloadImage = (imageUrl: string, messageId: string) => {
+    const link = document.createElement('a')
+    link.href = imageUrl
+    link.download = `horizon-ai-analysis-${messageId}.png`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const downloadAudio = (audioUrl: string, messageId: string) => {
+    const link = document.createElement('a')
+    link.href = audioUrl
+    link.download = `horizon-ai-audio-${messageId}.mp3`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const formatTimestamp = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
   if (loading) {
@@ -258,6 +320,10 @@ export default function AssistantPage() {
           )}
           <div className="flex flex-1 items-center gap-4">
             <h1 className="text-lg font-semibold">AI Assistant</h1>
+            <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground bg-muted rounded-full px-3 py-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              Connected to Horizon Backend
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <button
@@ -282,14 +348,14 @@ export default function AssistantPage() {
         {/* Chat content */}
         <main className="flex-1 flex flex-col">
           <div className="flex-1 overflow-y-auto p-4">
-            <div className="max-w-4xl mx-auto space-y-4">
+            <div className="max-w-4xl mx-auto space-y-6">
               {messages.map((message) => (
                 <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div
-                    className={`flex gap-3 max-w-[80%] ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}
+                    className={`flex gap-3 max-w-[85%] ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}
                   >
                     <div
-                      className={`h-8 w-8 rounded-full flex items-center justify-center ${
+                      className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
                         message.role === "assistant"
                           ? "bg-primary text-primary-foreground"
                           : "bg-muted text-muted-foreground"
@@ -297,42 +363,141 @@ export default function AssistantPage() {
                     >
                       {message.role === "assistant" ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
                     </div>
-                    <div
-                      className={`rounded-lg px-4 py-2 ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    <div className="flex flex-col gap-2">
+                      <div
+                        className={`rounded-lg px-4 py-3 ${
+                          message.role === "user"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                      </div>
+                      
+                      {/* Media attachments for assistant messages */}
+                      {message.role === "assistant" && (message.imageUrl || message.audioUrl) && (
+                        <div className="flex flex-col gap-3">
+                          {/* Generated Image */}
+                          {message.imageUrl && (
+                            <div className="bg-background border rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                  <ImageIcon className="h-3 w-3" />
+                                  Generated Infographic
+                                </span>
+                                <button
+                                  onClick={() => downloadImage(message.imageUrl!, message.id)}
+                                  className="p-1 rounded hover:bg-accent"
+                                  title="Download image"
+                                >
+                                  <Download className="h-3 w-3" />
+                                </button>
+                              </div>
+                              <img
+                                src={message.imageUrl}
+                                alt="Generated financial infographic"
+                                className="w-full max-w-md rounded border"
+                              />
+                            </div>
+                          )}
+                          
+                          {/* Generated Audio */}
+                          {message.audioUrl && (
+                            <div className="bg-background border rounded-lg p-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                  <Volume2 className="h-3 w-3" />
+                                  Audio Summary
+                                </span>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => playAudio(message.id)}
+                                    className="p-1 rounded hover:bg-accent"
+                                    title="Play/Pause audio"
+                                  >
+                                    <Volume2 className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => downloadAudio(message.audioUrl!, message.id)}
+                                    className="p-1 rounded hover:bg-accent"
+                                    title="Download audio"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      <div className="text-xs text-muted-foreground">
+                        {formatTimestamp(message.timestamp)}
+                      </div>
                     </div>
                   </div>
                 </div>
               ))}
+              
+              {/* Loading indicator */}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="flex gap-3">
+                    <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
+                      <Bot className="h-4 w-4" />
+                    </div>
+                    <div className="bg-muted rounded-lg px-4 py-3 flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">Analyzing markets and generating insights...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               <div ref={messagesEndRef} />
             </div>
           </div>
 
           {/* Input form */}
-          <div className="border-t p-4">
+          <div className="border-t p-4 bg-background">
             <div className="max-w-4xl mx-auto">
               <form onSubmit={handleSubmit} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Ask about Malaysian financial markets..."
+                  placeholder="Ask about stocks, news, Bursa announcements, economic data..."
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   disabled={isLoading}
-                  className="flex-1 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className="flex-1 h-12 rounded-lg border border-input bg-background px-4 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
                 <button
                   type="submit"
-                  disabled={isLoading}
-                  className="inline-flex items-center justify-center w-10 h-10 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading || !input.trim()}
+                  className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+                  {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowUp className="h-5 w-5" />}
                 </button>
               </form>
+              
+              {/* Quick suggestions */}
+              <div className="flex flex-wrap gap-2 mt-3">
+                {[
+                  "Latest TNB news",
+                  "AAPL stock price",
+                  "Malaysian inflation rate",
+                  "Bursa announcements for PETRONAS",
+                  "Social sentiment for tech stocks"
+                ].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => setInput(suggestion)}
+                    disabled={isLoading}
+                    className="px-3 py-1 text-xs bg-muted hover:bg-accent rounded-full transition-colors disabled:opacity-50"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </main>
