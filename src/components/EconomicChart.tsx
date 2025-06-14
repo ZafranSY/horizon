@@ -1,7 +1,6 @@
 // src/components/EconomicChart.tsx
-"use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useMemo } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -12,10 +11,24 @@ import {
   Tooltip,
   Legend,
   TimeScale,
+  ChartOptions,
+  ChartData,
+  TooltipItem,
+  Scale,
+  CoreScaleOptions,
+  Tick
 } from 'chart.js';
-import 'chartjs-adapter-date-fns'; // Still keep this import here!
+import { Line } from 'react-chartjs-2';
+import 'chartjs-adapter-date-fns';
 
-// Register Chart.js components once globally
+// Import your centralized types
+import {
+  EconomicDataPoint,
+  EconomicChartProps, // Using the new EconomicChartProps
+  InteractionMode,
+} from '@/lib/types'; // Adjust path if '@/lib/types' is not configured as an alias
+
+// Register necessary Chart.js components for this chart
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -27,130 +40,125 @@ ChartJS.register(
   TimeScale
 );
 
-interface EconomicDataPoint {
-  date: string;
-  value: number;
-  indicator: string;
-  country?: string;
-  title?: string;
-  unit?: string;
-}
+// EconomicChart component now receives data as a prop
+const EconomicChart: React.FC<EconomicChartProps> = ({ economicData, chartTitle = "Economic Indicator" }) => {
 
-interface EconomicChartProps {
-  data: EconomicDataPoint[];
-  title?: string;
-}
+  const chartData: ChartData<'line', (number | null)[], string> = useMemo(() => {
+    const labels = economicData.map(d => d.date) || [];
+    const values = economicData.map(d => d.value) || [];
 
-const EconomicChart: React.FC<EconomicChartProps> = ({ data, title }) => {
-  const chartRef = useRef<HTMLCanvasElement>(null); // Ref to the canvas element
-  const chartInstanceRef = useRef<ChartJS | null>(null); // Ref to store the Chart.js instance
-
-  useEffect(() => {
-    if (!chartRef.current) {
-      return; // Canvas element not ready
-    }
-
-    if (!data || data.length === 0) {
-      // If no data, destroy any existing chart and show message
-      if (chartInstanceRef.current) {
-        chartInstanceRef.current.destroy();
-        chartInstanceRef.current = null;
-      }
-      return;
-    }
-
-    const chartTitle = title || `${data[0]?.title || data[0]?.indicator || 'Economic'} Data for ${data[0]?.country || ''}`;
-    
-    const chartData = {
-      labels: data.map(item => new Date(item.date)),
+    return {
+      labels,
       datasets: [
         {
-          label: `${data[0]?.indicator || 'Value'} (${data[0]?.unit || ''})`,
-          data: data.map(item => item.value),
-          borderColor: 'hsl(var(--destructive))',
-          backgroundColor: 'hsl(var(--destructive) / 0.1)',
-          tension: 0.1,
+          type: 'line',
+          label: `${economicData[0]?.indicator || 'Value'} (${economicData[0]?.unit || ''})`,
+          data: values,
+          borderColor: '#10B981', // Tailwind green-500
+          backgroundColor: 'rgba(16, 185, 129, 0.2)', // Light green fill
+          borderWidth: 2,
           fill: true,
+          tension: 0.2,
           pointRadius: 2,
-          hoverRadius: 5,
+          pointHoverRadius: 5,
+          yAxisID: 'y-value',
         },
       ],
     };
+  }, [economicData, chartTitle]); // Recompute if economicData changes
 
-    const options = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'top' as const,
+  const chartOptions: ChartOptions<'line'> = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as InteractionMode,
+      intersect: false,
+    },
+    plugins: {
+      title: {
+        display: true,
+        text: chartTitle,
+        font: {
+          size: 18,
+          weight: 'bold',
+        },
+        color: '#333',
+      },
+      legend: {
+        display: true,
+        position: 'top' as const,
+        labels: {
+          color: '#555',
+        },
+      },
+      tooltip: {
+        mode: 'index' as InteractionMode,
+        intersect: false,
+        callbacks: {
+          title: function(context: TooltipItem<'line'>[]) {
+            return context[0]?.label;
+          },
+          label: function(context: TooltipItem<'line'>) {
+            const label = context.dataset.label || '';
+            return `${label}: ${context.raw as number}`; // Display raw value
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: 'month', // Default unit, adjust based on your economic data frequency
+          tooltipFormat: 'MMM yyyy',
+          displayFormats: {
+            month: 'MMM yyyy',
+            year: 'yyyy',
+          },
         },
         title: {
           display: true,
-          text: chartTitle,
+          text: 'Date',
+          color: '#555',
         },
-        tooltip: {
-          mode: 'index' as const,
-          intersect: false,
-        }
-      },
-      scales: {
-        x: {
-          type: 'time' as const,
-          time: {
-            unit: 'month' as const,
-            tooltipFormat: 'MMM DD, YYYY', // More readable format
-            displayFormats: {
-              month: 'MMM YYYY',
-              quarter: 'qqq YYYY',
-              year: 'YYYY',
-            },
-          },
-          title: {
-            display: true,
-            text: 'Date',
-          },
+        ticks: {
+          color: '#777',
         },
-        y: {
-          beginAtZero: false,
-          title: {
-            display: true,
-            text: data[0]?.unit || 'Value',
-          },
+        grid: {
+          color: 'rgba(200, 200, 200, 0.2)',
         },
       },
-    };
+      'y-value': { // Use a specific ID for the value axis
+        type: 'linear',
+        display: true,
+        position: 'left' as const,
+        title: {
+          display: true,
+          text: `${economicData[0]?.indicator || 'Value'} (${economicData[0]?.unit || ''})`,
+          color: '#555',
+        },
+        ticks: {
+          color: '#777',
+          callback: function(this: Scale<CoreScaleOptions>, value: string | number, index: number, ticks: Tick[]) {
+            return (value as number).toFixed(2) + (economicData[0]?.unit || '');
+          },
+        },
+        grid: {
+          color: 'rgba(200, 200, 200, 0.2)',
+        },
+      },
+    },
+  }), [economicData, chartTitle]); // Recompute options if data or title changes
 
-    // If a chart instance already exists, update its data
-    if (chartInstanceRef.current) {
-      chartInstanceRef.current.data = chartData;
-      chartInstanceRef.current.options = options;
-      chartInstanceRef.current.update();
-    } else {
-      // Create a new chart instance if one doesn't exist
-      chartInstanceRef.current = new ChartJS(chartRef.current, {
-        type: 'line', // You can change type to 'bar', etc.
-        data: chartData,
-        options: options,
-      });
-    }
-
-    // Cleanup function: destroy chart instance on component unmount
-    return () => {
-      if (chartInstanceRef.current) {
-        chartInstanceRef.current.destroy();
-        chartInstanceRef.current = null;
-      }
-    };
-  }, [data, title]); // Re-run effect if data or title changes
-
-  if (!data || data.length === 0) {
-    return <div className="text-center text-muted-foreground">No economic data available to display.</div>;
+  if (!economicData || economicData.length === 0) {
+    return <div className="p-4 text-center text-gray-500">No economic data provided to display.</div>;
   }
 
   return (
-    <div className="bg-background border rounded-lg p-4">
-      <div className="h-64">
-        <canvas ref={chartRef}></canvas> {/* The canvas element */}
+    <div className="bg-white p-4 rounded-lg shadow-md w-full font-inter mt-4">
+      <h3 className="text-xl font-bold mb-3 text-gray-800">{chartTitle}</h3>
+      <div className="relative h-72 md:h-96 w-full border border-gray-200 rounded">
+        <Line data={chartData} options={chartOptions} />
       </div>
     </div>
   );

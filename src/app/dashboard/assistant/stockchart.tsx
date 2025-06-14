@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+// src/components/StockChart.tsx
+
+import React, { useMemo, useCallback, useState } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -13,24 +15,23 @@ import {
   ChartOptions,
   ChartData,
   ChartDataset,
-  TooltipItem, // Already imported
-  Scale, // Import Scale for callback context typing
-  CoreScaleOptions, // Import CoreScaleOptions for callback context typing
-  Tick // Import Tick for the third callback parameter
+  TooltipItem,
+  Scale,
+  CoreScaleOptions,
+  Tick
 } from 'chart.js';
+import { Line, Bar } from 'react-chartjs-2';
+import 'chartjs-adapter-date-fns';
+
+// Import your centralized types
 import {
   StockDataPoint,
   HistoricalStockData,
-  ApiResponse,
-  StockChartProps,
+  StockChartProps, // Using the updated StockChartProps
   InteractionMode,
-} from '@/lib/types';
+} from '@/lib/types'; // Adjust path if '@/lib/types' is not configured as an alias
 
-import { Line, Bar } from 'react-chartjs-2';
-import 'chartjs-adapter-date-fns';
-import axios from 'axios';
-
-// Register Chart.js components
+// Register necessary Chart.js components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -43,109 +44,51 @@ ChartJS.register(
   TimeScale
 );
 
-// Define the backend API base URL
-const API_BASE_URL = 'http://localhost:3000/api/charts';
-
-const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
+// StockChart component now receives data as a prop
+const StockChart: React.FC<StockChartProps> = ({ historicalData }) => {
+  // Use state to manage chart type, data type, time range (if needed internally for display logic)
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [dataType, setDataType] = useState<keyof StockDataPoint>('close');
-  const [timeRange, setTimeRange] = useState<'1D' | '1W' | '1M' | '3M' | '1Y' | '5Y'>('1M');
   const [showVolume, setShowVolume] = useState(true);
-  const [stockData, setStockData] = useState<HistoricalStockData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [currentTicker, setCurrentTicker] = useState(initialTicker);
-  const [inputValue, setInputValue] = useState(initialTicker);
 
-  const getTimespanAndDates = useCallback((range: string) => {
-    const today = new Date();
-    let fromDate = '';
-    let toDate = today.toISOString().split('T')[0];
+  // Derive ticker and time range from the received historicalData
+  const currentTicker = historicalData.symbol;
+  // You might need to infer timeRange from historicalData.metadata.timeRange if you want to display it,
+  // but the selection controls are assumed to be in page.tsx or a higher component now.
+  const displayTimeRange = `${historicalData.metadata.timeRange.start} to ${historicalData.metadata.timeRange.end}`;
 
-    switch (range) {
-      case '1D':
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'minute', fromDate, toDate };
-      case '1W':
-        today.setDate(today.getDate() - 7);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'day', fromDate, toDate };
-      case '1M':
-        today.setMonth(today.getMonth() - 1);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'day', fromDate, toDate };
-      case '3M':
-        today.setMonth(today.getMonth() - 3);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'day', fromDate, toDate };
-      case '1Y':
-        today.setFullYear(today.getFullYear() - 1);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'week', fromDate, toDate };
-      case '5Y':
-        today.setFullYear(today.getFullYear() - 5);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'month', fromDate, toDate };
-      default:
-        today.setFullYear(today.getFullYear() - 5);
-        fromDate = today.toISOString().split('T')[0];
-        return { timespan: 'month', fromDate, toDate };
+
+  // Helper function to calculate Simple Moving Average (SMA)
+  const calculateSMA = useCallback((data: StockDataPoint[], window: number): (number | null)[] => {
+    if (!data || data.length < window) return Array(data.length).fill(null);
+    const sma: (number | null)[] = [];
+    for (let i = 0; i < data.length; i++) {
+      if (i < window - 1) {
+        sma.push(null);
+      } else {
+        const sum = data.slice(i - window + 1, i + 1).reduce((acc, current) => acc + current.close, 0);
+        sma.push(sum / window);
+      }
     }
+    return sma;
   }, []);
 
-  const fetchData = useCallback(async () => {
-    if (!currentTicker) return;
+  // Memoized SMA calculations based on the received historicalData
+  const sma20 = useMemo(() => calculateSMA(historicalData.data, 20), [historicalData.data, calculateSMA]);
+  const sma50 = useMemo(() => calculateSMA(historicalData.data, 50), [historicalData.data, calculateSMA]);
 
-    setLoading(true);
-    setError(null);
-    try {
-      const { timespan, fromDate, toDate } = getTimespanAndDates(timeRange);
-      const response = await axios.get<ApiResponse<HistoricalStockData>>(
-        `${API_BASE_URL}/stock/${currentTicker}`,
-        {
-          params: {
-            timespan,
-            from: fromDate,
-            to: toDate,
-            limit: 100
-          },
-        }
-      );
-
-      if (response.data.success) {
-        setStockData(response.data.data);
-      } else {
-        setError(response.data.error || 'Failed to fetch stock data');
-      }
-    } catch (err) {
-      console.error('Error fetching stock data:', err);
-      setError('An error occurred while fetching stock data.');
-    } finally {
-      setLoading(false);
-    }
-  }, [currentTicker, timeRange, getTimespanAndDates]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleTickerSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inputValue.trim() !== '' && inputValue.trim().toUpperCase() !== currentTicker) {
-      setCurrentTicker(inputValue.trim().toUpperCase());
-    }
-  };
-
-  // Helper function to create datasets
-  const createDatasets = useCallback((data: StockDataPoint[], currentChartType: 'line' | 'bar', currentDataType: keyof StockDataPoint, showVolume: boolean) => {
+  // Helper function to generate datasets for Chart.js
+  const createChartDatasets = useCallback((data: StockDataPoint[], currentChartType: 'line' | 'bar', currentDataType: keyof StockDataPoint, showVolume: boolean, sma20Data: (number | null)[], sma50Data: (number | null)[]) => {
     const mainDatasetColor = '#3B82F6'; // Tailwind blue-500
     const volumeDatasetColor = '#9CA3AF'; // Tailwind gray-400
+    const sma20Color = '#EF4444'; // Tailwind red-500
+    const sma50Color = '#EAB308'; // Tailwind yellow-500
 
     const datasets: ChartDataset<'line' | 'bar', (number | null)[]>[] = [
       {
         type: currentChartType,
         label: `${currentTicker} ${currentDataType.charAt(0).toUpperCase() + currentDataType.slice(1)} Price`,
-        data: data.map(d => d[currentDataType] as number) || [],
+        data: data.map(d => d[currentDataType] as number),
         borderColor: mainDatasetColor,
         backgroundColor: mainDatasetColor,
         borderWidth: 1.5,
@@ -161,49 +104,22 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
       datasets.push({
         type: 'bar',
         label: 'Volume',
-        data: data.map(d => d.volume) || [],
+        data: data.map(d => d.volume),
         backgroundColor: volumeDatasetColor,
         borderColor: volumeDatasetColor,
         borderWidth: 1,
         yAxisID: 'volume',
       });
     }
-    return datasets;
-  }, [currentTicker]);
 
-  // Calculate moving averages
-  const calculateSMA = useCallback((data: StockDataPoint[], window: number) => {
-    if (!data || data.length < window) return [];
-    const sma = [];
-    for (let i = 0; i < data.length; i++) {
-      if (i < window - 1) {
-        sma.push(null);
-      } else {
-        const sum = data.slice(i - window + 1, i + 1).reduce((acc, current) => acc + current.close, 0);
-        sma.push(sum / window);
-      }
-    }
-    return sma;
-  }, []);
-
-  const sma20 = useMemo(() => stockData ? calculateSMA(stockData.data, 20) : [], [stockData, calculateSMA]);
-  const sma50 = useMemo(() => stockData ? calculateSMA(stockData.data, 50) : [], [stockData, calculateSMA]);
-
-
-  // Prepare data for the LINE chart specifically
-  const lineChartData: ChartData<'line', (number | null)[], string> = useMemo(() => {
-    const labels = stockData?.data.map(d => d.date) || [];
-    const datasets = createDatasets(stockData?.data || [], 'line', dataType, showVolume);
-
-    // Add SMA datasets only if chartType is 'line' (they are line type anyway)
-    if (chartType === 'line') {
+    if (currentChartType === 'line') {
       datasets.push(
         {
           type: 'line',
           label: 'SMA 20',
-          data: sma20,
-          borderColor: '#EF4444', // Red-500
-          backgroundColor: '#EF4444',
+          data: sma20Data,
+          borderColor: sma20Color,
+          backgroundColor: sma20Color,
           borderWidth: 1,
           pointRadius: 0,
           fill: false,
@@ -213,9 +129,9 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
         {
           type: 'line',
           label: 'SMA 50',
-          data: sma50,
-          borderColor: '#EAB308', // Yellow-500
-          backgroundColor: '#EAB308',
+          data: sma50Data,
+          borderColor: sma50Color,
+          backgroundColor: sma50Color,
           borderWidth: 1,
           pointRadius: 0,
           fill: false,
@@ -225,18 +141,24 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
       );
     }
 
+    return datasets;
+  }, [currentTicker]);
+
+  // Memoized data for the Line chart specifically
+  const lineChartData: ChartData<'line', (number | null)[], string> = useMemo(() => {
+    const labels = historicalData.data.map(d => d.date) || [];
+    const datasets = createChartDatasets(historicalData.data, 'line', dataType, showVolume, sma20, sma50);
     return { labels, datasets: datasets as ChartDataset<'line', (number | null)[]>[] };
-  }, [stockData, dataType, showVolume, chartType, createDatasets, sma20, sma50]);
+  }, [historicalData, dataType, showVolume, createChartDatasets, sma20, sma50]);
 
-
-  // Prepare data for the BAR chart specifically
+  // Memoized data for the Bar chart specifically
   const barChartData: ChartData<'bar', (number | null)[], string> = useMemo(() => {
-    const labels = stockData?.data.map(d => d.date) || [];
-    const datasets = createDatasets(stockData?.data || [], 'bar', dataType, showVolume);
+    const labels = historicalData.data.map(d => d.date) || [];
+    const datasets = createChartDatasets(historicalData.data, 'bar', dataType, showVolume, sma20, sma50);
     return { labels, datasets: datasets as ChartDataset<'bar', (number | null)[]>[] };
-  }, [stockData, dataType, showVolume, createDatasets]);
+  }, [historicalData, dataType, showVolume, createChartDatasets, sma20, sma50]);
 
-
+  // Memoized chart options for both chart types
   const chartOptions: ChartOptions<'line' | 'bar'> = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
@@ -247,7 +169,7 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
     plugins: {
       title: {
         display: true,
-        text: `${currentTicker} Stock Chart - ${timeRange}`,
+        text: `${currentTicker} Stock Chart - ${displayTimeRange}`,
         font: {
           size: 18,
           weight: 'bold',
@@ -270,9 +192,8 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
           },
           label: function(context: TooltipItem<'line' | 'bar'>) {
             const label = context.dataset.label || '';
-            // Safely check for context.raw being a number before calling toLocaleString
             if (context.dataset.yAxisID === 'volume') {
-              return `${label}: ${(context.raw as number)?.toLocaleString()}`;
+              return `${label}: ${(context.raw as number)?.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
             }
             return `${label}: $${(context.raw as number)?.toFixed(2)}`;
           },
@@ -283,10 +204,12 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
       x: {
         type: 'time',
         time: {
-          unit: timeRange === '1D' ? 'hour' : (timeRange === '1W' ? 'day' : (timeRange === '1M' || timeRange === '3M' ? 'week' : (timeRange === '1Y' ? 'month' : 'year'))),
-          tooltipFormat: timeRange === '1D' ? 'MMM d, HH:mm' : 'MMM d, yyyy', // Ensure consistent tooltip format
+          // Unit should ideally be derived from the actual date range of `historicalData`
+          // For now, we'll use a reasonable default or adjust based on data density.
+          // This part might need further refinement based on the exact density of data provided by backend for different time ranges.
+          unit: 'day', // Default unit, adjust dynamically if needed
+          tooltipFormat: 'MMM d, yyyy', // Default tooltip format
           displayFormats: {
-            hour: 'HH:mm',
             day: 'MMM d',
             week: 'MMM d',
             month: 'MMM yyyy',
@@ -316,7 +239,6 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
         },
         ticks: {
           color: '#777',
-          // FIX: Updated signature to match Chart.js definition
           callback: function(this: Scale<CoreScaleOptions>, value: string | number, index: number, ticks: Tick[]) {
             return `$${(value as number).toFixed(2)}`;
           },
@@ -336,7 +258,6 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
         },
         ticks: {
           color: '#777',
-          // FIX: Updated signature to match Chart.js definition
           callback: function(this: Scale<CoreScaleOptions>, value: string | number, index: number, ticks: Tick[]) {
             return (value as number).toLocaleString();
           },
@@ -346,92 +267,53 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
         },
       },
     },
-  }), [currentTicker, timeRange, chartType, showVolume, dataType, stockData]);
+  }), [currentTicker, displayTimeRange, chartType, showVolume, dataType]); // Dependencies for useMemo
 
-
-  if (loading) {
-    return <div className="p-4 text-center">Loading chart data...</div>;
-  }
-
-  if (error) {
-    return <div className="p-4 text-center text-red-500">Error: {error}</div>;
-  }
-
-  if (!stockData || stockData.data.length === 0) {
-    return <div className="p-4 text-center text-gray-500">No data available for {currentTicker} in the selected time range.</div>;
+  if (!historicalData || historicalData.data.length === 0) {
+    return <div className="p-4 text-center text-gray-500">No stock data provided to display.</div>;
   }
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md max-w-4xl mx-auto my-8">
-      <h2 className="text-2xl font-bold mb-4 text-gray-800">Stock Chart: {currentTicker}</h2>
+    <div className="bg-white p-4 rounded-lg shadow-md w-full font-inter">
+      <h3 className="text-xl font-bold mb-3 text-gray-800">Stock Chart: {currentTicker}</h3>
 
-      <form onSubmit={handleTickerSubmit} className="mb-4 flex items-center space-x-2">
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value.toUpperCase())}
-          placeholder="Enter Stock Ticker (e.g., AAPL)"
-          className="p-2 border border-gray-300 rounded-md flex-grow focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit"
-          className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-md transition duration-200"
-        >
-          View Stock
-        </button>
-      </form>
-
-      <div className="flex flex-wrap gap-2 mb-4 justify-center">
-        {['1D', '1W', '1M', '3M', '1Y', '5Y', 'all'].map((range) => (
-          <button
-            key={range}
-            onClick={() => setTimeRange(range as typeof timeRange)}
-            className={`px-3 py-1 rounded-md text-sm font-medium ${
-              timeRange === range
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            {range}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex gap-4 mb-4 justify-center">
-        <label className="flex items-center space-x-2">
+      {/* Chart controls for type and volume */}
+      <div className="flex flex-wrap gap-4 mb-4 justify-center items-center text-sm">
+        <label className="flex items-center space-x-1 cursor-pointer text-gray-700">
           <input
             type="radio"
             name="chartType"
             value="line"
             checked={chartType === 'line'}
             onChange={() => setChartType('line')}
-            className="form-radio text-blue-600"
+            className="form-radio text-blue-600 h-3.5 w-3.5 accent-blue-600"
           />
           <span>Line Chart</span>
         </label>
-        <label className="flex items-center space-x-2">
+        <label className="flex items-center space-x-1 cursor-pointer text-gray-700">
           <input
             type="radio"
             name="chartType"
             value="bar"
             checked={chartType === 'bar'}
             onChange={() => setChartType('bar')}
-            className="form-radio text-blue-600"
+            className="form-radio text-blue-600 h-3.5 w-3.5 accent-blue-600"
           />
           <span>Bar Chart</span>
         </label>
-        <label className="flex items-center space-x-2">
+        <label className="flex items-center space-x-1 cursor-pointer text-gray-700">
           <input
             type="checkbox"
             checked={showVolume}
             onChange={() => setShowVolume(!showVolume)}
-            className="form-checkbox text-blue-600"
+            className="form-checkbox text-blue-600 h-3.5 w-3.5 rounded accent-blue-600"
           />
           <span>Show Volume</span>
         </label>
       </div>
 
-      <div className="relative h-96">
+      {/* Chart Canvas */}
+      <div className="relative h-72 md:h-96 w-full mb-4 border border-gray-200 rounded">
         {chartType === 'line' ? (
           <Line data={lineChartData} options={chartOptions as ChartOptions<'line'>} />
         ) : (
@@ -439,23 +321,18 @@ const StockChart: React.FC<StockChartProps> = ({ initialTicker = 'AAPL' }) => {
         )}
       </div>
 
-      {stockData && stockData.metadata && (
-        <div className="mt-6 text-gray-700 grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Stock Metadata Display */}
+      {historicalData.metadata && (
+        <div className="mt-4 text-gray-700 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
           <div>
-            <h3 className="font-semibold text-lg mb-2">Price Overview</h3>
-            <p><strong>Current Price:</strong> ${stockData.metadata.priceRange.current?.toFixed(2)}</p>
-            <p><strong>Change:</strong> ${stockData.metadata.priceRange.change?.toFixed(2)}</p>
-            <p><strong>Change Percent:</strong> {stockData.metadata.priceRange.changePercent?.toFixed(2)}%</p>
-            <p><strong>Min Price ({timeRange}):</strong> ${stockData.metadata.priceRange.min?.toFixed(2)}</p>
-            <p><strong>Max Price ({timeRange}):</strong> ${stockData.metadata.priceRange.max?.toFixed(2)}</p>
+            <p><strong>Current Price:</strong> ${historicalData.metadata.priceRange.current?.toFixed(2)}</p>
+            <p><strong>Change:</strong> <span className={historicalData.metadata.priceRange.changePercent > 0 ? 'text-green-600' : 'text-red-600'}>${historicalData.metadata.priceRange.change?.toFixed(2)}</span></p>
+            <p><strong>Change %:</strong> <span className={historicalData.metadata.priceRange.changePercent > 0 ? 'text-green-600' : 'text-red-600'}>{historicalData.metadata.priceRange.changePercent?.toFixed(2)}%</span></p>
           </div>
           <div>
-            <h3 className="font-semibold text-lg mb-2">Volume Overview</h3>
-            <p><strong>Min Volume:</strong> {stockData.metadata.volumeRange.min?.toLocaleString()}</p>
-            <p><strong>Max Volume:</strong> {stockData.metadata.volumeRange.max?.toLocaleString()}</p>
-            <p><strong>Avg Volume:</strong> {stockData.metadata.volumeRange.average?.toLocaleString()}</p>
-            <p><strong>Data Points:</strong> {stockData.metadata.totalDataPoints}</p>
-            <p><strong>Date Range:</strong> {stockData.metadata.timeRange.start} to {stockData.metadata.timeRange.end}</p>
+            <p><strong>Avg Volume:</strong> {historicalData.metadata.volumeRange.average?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+            <p><strong>Date Range:</strong> {historicalData.metadata.timeRange.start} to {historicalData.metadata.timeRange.end}</p>
+            <p><strong>Total Data Points:</strong> {historicalData.metadata.totalDataPoints}</p>
           </div>
         </div>
       )}
