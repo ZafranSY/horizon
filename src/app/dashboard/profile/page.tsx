@@ -1,8 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+// --- Core React Imports ---
+import React, { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+
+// --- Lucide React Icons ---
 import {
   BarChart3,
   BookOpen,
@@ -24,7 +27,11 @@ import {
   Calendar,
   MapPin,
   Phone,
+  PlusCircle, // Added for adding interests
+  MinusCircle, // Added for removing interests
 } from "lucide-react"
+
+// --- Custom Hooks ---
 import { useAuth } from "@/hooks/use-auth"
 
 export default function ProfilePage() {
@@ -35,6 +42,11 @@ export default function ProfilePage() {
   const [isSaving, setIsSaving] = useState(false)
   const { user, loading, error } = useAuth()
 
+  // --- Profile Image Logic: State and Ref ---
+  const [profilePicture, setProfilePicture] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // --- Profile Data State ---
   const [profileData, setProfileData] = useState({
     name: "Demo User",
     email: "demo@example.com",
@@ -45,9 +57,24 @@ export default function ProfilePage() {
     investmentExperience: "Beginner",
     riskTolerance: "Moderate",
     investmentGoals: "Long-term growth",
-    preferredSectors: ["Technology", "Healthcare", "Finance"],
+    preferredSectors: ["Technology", "Healthcare", "Finance"], // Will be "Investment Interests"
   })
 
+  // --- Investment Interests Logic ---
+  const [newInterestInput, setNewInterestInput] = useState(""); // State for custom interest input
+
+  // Predefined list of investment interests/themes/ETFs
+  const availableInvestmentInterests = [
+    "Technology", "Healthcare", "Finance", "Energy", "Real Estate",
+    "ESG (Environmental, Social, Governance)", "AI & Robotics", "Biotechnology",
+    "Clean Energy", "Cybersecurity", "E-commerce", "Semiconductors",
+    "ETFs (Exchange Traded Funds)", "Mutual Funds", "Growth Investing",
+    "Value Investing", "Dividend Stocks", "BlackRock ETFs", "Vanguard ETFs",
+    "Cryptocurrency (High Risk)", "Emerging Markets", "Fixed Income", "Gold & Precious Metals"
+  ];
+
+
+  // --- Effects ---
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768)
@@ -68,9 +95,13 @@ export default function ProfilePage() {
         name: user.displayName || "User",
         email: user.email || "user@example.com",
       }))
+      if (user.photoURL) {
+        setProfilePicture(user.photoURL);
+      }
     }
   }, [user])
 
+  // --- Navigation Data ---
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Home, current: false },
     { name: "Market Data", href: "/dashboard/market", icon: LineChart, current: false },
@@ -85,6 +116,7 @@ export default function ProfilePage() {
     { name: "Settings", href: "/dashboard/settings", icon: Settings, current: false },
   ]
 
+  // --- Handlers ---
   const handleSignOut = async () => {
     try {
       if (typeof window !== "undefined") {
@@ -102,9 +134,39 @@ export default function ProfilePage() {
     }
   }
 
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePicture(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAddInterest = (interest: string) => {
+    const trimmedInterest = interest.trim();
+    if (trimmedInterest && !profileData.preferredSectors.includes(trimmedInterest)) {
+      setProfileData(prev => ({
+        ...prev,
+        preferredSectors: [...prev.preferredSectors, trimmedInterest]
+      }));
+      setNewInterestInput(""); // Clear input after adding
+    }
+  };
+
+  const handleRemoveInterest = (interestToRemove: string) => {
+    setProfileData(prev => ({
+      ...prev,
+      preferredSectors: prev.preferredSectors.filter(interest => interest !== interestToRemove)
+    }));
+  };
+
   const handleSave = async () => {
     setIsSaving(true)
-    // Simulate API call
+    console.log("Saving profile data:", profileData);
+    console.log("New profile picture:", profilePicture);
     await new Promise((resolve) => setTimeout(resolve, 1000))
     setIsSaving(false)
     setIsEditing(false)
@@ -117,6 +179,7 @@ export default function ProfilePage() {
     }))
   }
 
+  // --- Render Logic ---
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -263,16 +326,42 @@ export default function ProfilePage() {
             <div className="rounded-lg border bg-background shadow-sm">
               <div className="p-6">
                 <div className="flex flex-col md:flex-row items-center gap-6">
+                  {/* Profile Image Logic: Display area */}
                   <div className="relative">
-                    <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-2xl">
-                      {profileData.name.charAt(0).toUpperCase()}
-                    </div>
+                    {profilePicture ? (
+                      <img
+                        src={profilePicture}
+                        alt="Profile"
+                        className="h-24 w-24 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-2xl">
+                        {profileData.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     {isEditing && (
-                      <button className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors">
-                        <Camera className="h-4 w-4" />
-                      </button>
+                      <>
+                        {/* Hidden file input for actual file selection */}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          ref={fileInputRef}
+                          onChange={handleImageChange}
+                          style={{ display: 'none' }} // Hide the default file input
+                        />
+                        {/* Camera button to trigger file input */}
+                        <button
+                          onClick={() => fileInputRef.current?.click()} // This clicks the hidden input
+                          className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors"
+                          title="Upload new profile picture"
+                        >
+                          <Camera className="h-4 w-4" />
+                        </button>
+                      </>
                     )}
                   </div>
+                  {/* End Profile Image Logic */}
+
                   <div className="flex-1 text-center md:text-left">
                     {isEditing ? (
                       <input
@@ -405,20 +494,90 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* Preferred Sectors */}
+            {/* Preferred Investment Interests (Renamed Section) */}
             <div className="rounded-lg border bg-background shadow-sm">
               <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Preferred Investment Sectors</h3>
-                <div className="flex flex-wrap gap-2">
-                  {profileData.preferredSectors.map((sector) => (
-                    <span
-                      key={sector}
-                      className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary"
-                    >
-                      {sector}
-                    </span>
-                  ))}
-                </div>
+                <h3 className="text-lg font-semibold mb-4">Preferred Investment Interests</h3> {/* Renamed header */}
+                {!isEditing ? (
+                  <div className="flex flex-wrap gap-2">
+                    {profileData.preferredSectors.map((sector) => (
+                      <span
+                        key={sector}
+                        className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary"
+                      >
+                        {sector}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    {/* Display selected interests with remove option */}
+                    <div className="flex flex-wrap gap-2">
+                      {profileData.preferredSectors.map((interest) => (
+                        <span
+                          key={interest}
+                          className="inline-flex items-center rounded-full bg-primary px-3 py-1 text-sm font-medium text-primary-foreground"
+                        >
+                          {interest}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveInterest(interest)}
+                            className="ml-1 -mr-1 p-0.5 rounded-full hover:bg-primary/80 transition-colors"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Input for custom interests */}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newInterestInput}
+                        onChange={(e) => setNewInterestInput(e.target.value)}
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault(); // Prevent form submission
+                            handleAddInterest(newInterestInput);
+                          }
+                        }}
+                        placeholder="Add custom interest or select below..."
+                        className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddInterest(newInterestInput)}
+                        className="inline-flex items-center justify-center p-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        title="Add custom interest"
+                      >
+                        <PlusCircle className="h-5 w-5" />
+                      </button>
+                    </div>
+
+                    {/* Suggested interests */}
+                    <div>
+                      <label className="text-sm font-medium text-muted-foreground mb-2 block">Suggestions:</label>
+                      <div className="flex flex-wrap gap-2">
+                        {availableInvestmentInterests.map((interest) => (
+                          <button
+                            type="button"
+                            key={interest}
+                            onClick={() => handleAddInterest(interest)}
+                            className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                              profileData.preferredSectors.includes(interest)
+                                ? "bg-primary/10 text-primary border-primary/50 cursor-not-allowed opacity-70" // Highlight selected
+                                : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                            }`}
+                            disabled={profileData.preferredSectors.includes(interest)}
+                          >
+                            {interest}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
