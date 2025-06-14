@@ -1,10 +1,12 @@
+// src/app/dashboard/assistant/page.tsx
 "use client"
 
 import type React from "react"
-
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import dynamic from 'next/dynamic' // <<< IMPORT DYNAMIC HERE
+
 import {
   BarChart3,
   BookOpen,
@@ -25,24 +27,89 @@ import {
   Volume2,
   Image as ImageIcon,
   Download,
+  Upload,
+  FileImage,
 } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 
+// REMOVE ALL THESE DIRECT CHART.JS IMPORTS AND REGISTRATIONS
+// import {
+//   Chart as ChartJS,
+//   CategoryScale,
+//   LinearScale,
+//   PointElement,
+//   LineElement,
+//   Title,
+//   Tooltip,
+//   Legend,
+//   TimeScale,
+// } from 'chart.js'
+// import { Line } from 'react-chartjs-2'
+// import 'chartjs-adapter-date-fns'
+
+// REMOVE THIS GLOBAL REGISTRATION
+// ChartJS.register(
+//   CategoryScale,
+//   LinearScale,
+//   PointElement,
+//   LineElement,
+//   Title,
+//   Tooltip,
+//   Legend,
+//   TimeScale
+// )
+
+// Dynamically import your chart components
+// ssr: false is CRUCIAL here to prevent server-side rendering of browser-dependent modules
+const StockChart = dynamic(() => import('@/components/StockChart'), { ssr: false });
+const EconomicChart = dynamic(() => import('@/components/EconomicChart'), { ssr: false });
+
+// Moved interfaces to be used by dynamic components or kept here if needed for page logic
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
   imageUrl?: string
   audioUrl?: string
+  historicalStockData?: StockDataPoint[]
+  historicalEconomicData?: EconomicDataPoint[]
   timestamp: Date
+}
+
+interface StockDataPoint {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  adjustedClose: number
+  volume: number
+}
+
+interface EconomicDataPoint {
+  date: string
+  value: number
+  indicator: string
+  country?: string // Add country here for more descriptive data
+  title?: string // Add title here for more descriptive data
+  unit?: string // Add unit here for more descriptive data
 }
 
 interface AnalysisResponse {
   summary: string
   imageUrl?: string
   audioUrl?: string
+  historicalStockData?: StockDataPoint[]
+  historicalEconomicData?: EconomicDataPoint[]
   error?: string
 }
+
+interface OCRResponse {
+  extractedText: string
+  error?: string
+}
+
+// REMOVE StockChart AND EconomicChart COMPONENT DEFINITIONS FROM HERE
 
 export default function AssistantPage() {
   const router = useRouter()
@@ -54,14 +121,16 @@ export default function AssistantPage() {
       id: "welcome",
       role: "assistant",
       content:
-        "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. What would you like to know?",
+        "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. You can also upload images for OCR text extraction. What would you like to know?",
       timestamp: new Date(),
     },
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isOCRLoading, setIsOCRLoading] = useState(false)
   const [audioElements, setAudioElements] = useState<{[key: string]: HTMLAudioElement}>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -132,7 +201,6 @@ export default function AssistantPage() {
     setIsLoading(true)
 
     try {
-      // Call your backend API
       const response = await fetch('http://localhost:3001/analyze', {
         method: 'POST',
         headers: {
@@ -157,12 +225,13 @@ export default function AssistantPage() {
         content: data.summary,
         imageUrl: data.imageUrl,
         audioUrl: data.audioUrl,
+        historicalStockData: data.historicalStockData,
+        historicalEconomicData: data.historicalEconomicData,
         timestamp: new Date(),
       }
 
       setMessages((prev) => [...prev, assistantMessage])
 
-      // Preload audio if available
       if (data.audioUrl) {
         const audio = new Audio(data.audioUrl)
         setAudioElements(prev => ({
@@ -173,7 +242,7 @@ export default function AssistantPage() {
 
     } catch (error) {
       console.error("Error generating response:", error)
-      
+
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -187,13 +256,75 @@ export default function AssistantPage() {
     }
   }
 
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setIsOCRLoading(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+
+      const response = await fetch('http://localhost:3001/ocr', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(`OCR failed: ${response.status}`)
+      }
+
+      const data: OCRResponse = await response.json()
+
+      if (data.error) {
+        throw new Error(data.error)
+      }
+
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: "user",
+        content: `Uploaded image for OCR analysis: ${file.name}`,
+        timestamp: new Date(),
+      }
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `I've extracted the following text from your image:\n\n"${data.extractedText}"\n\nWould you like me to analyze this content for financial insights?`,
+        timestamp: new Date(),
+      }
+
+      setMessages((prev) => [...prev, userMessage, assistantMessage])
+
+      setInput(data.extractedText)
+
+    } catch (error) {
+      console.error("Error processing OCR:", error)
+
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `Sorry, I couldn't extract text from the image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+      }
+
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
+      setIsOCRLoading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   const handleReset = () => {
     setMessages([
       {
         id: "welcome",
         role: "assistant",
         content:
-          "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. What would you like to know?",
+          "Hello! I'm your Horizon AI financial assistant. I can help you with Malaysian and US financial markets, including real-time news, stock data, Bursa announcements, and economic indicators. You can also upload images for OCR text extraction. What would you like to know?",
         timestamp: new Date(),
       },
     ])
@@ -373,10 +504,20 @@ export default function AssistantPage() {
                       >
                         <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
                       </div>
-                      
-                      {/* Media attachments for assistant messages */}
-                      {message.role === "assistant" && (message.imageUrl || message.audioUrl) && (
+
+                      {/* Charts and Media attachments for assistant messages */}
+                      {message.role === "assistant" && (message.historicalStockData || message.historicalEconomicData || message.imageUrl || message.audioUrl) && (
                         <div className="flex flex-col gap-3">
+                          {/* Stock Chart */}
+                          {message.historicalStockData && message.historicalStockData.length > 0 && (
+                            <StockChart data={message.historicalStockData} />
+                          )}
+
+                          {/* Economic Chart */}
+                          {message.historicalEconomicData && message.historicalEconomicData.length > 0 && (
+                            <EconomicChart data={message.historicalEconomicData} />
+                          )}
+
                           {/* Generated Image */}
                           {message.imageUrl && (
                             <div className="bg-background border rounded-lg p-3">
@@ -400,7 +541,7 @@ export default function AssistantPage() {
                               />
                             </div>
                           )}
-                          
+
                           {/* Generated Audio */}
                           {message.audioUrl && (
                             <div className="bg-background border rounded-lg p-3">
@@ -430,7 +571,7 @@ export default function AssistantPage() {
                           )}
                         </div>
                       )}
-                      
+
                       <div className="text-xs text-muted-foreground">
                         {formatTimestamp(message.timestamp)}
                       </div>
@@ -438,7 +579,7 @@ export default function AssistantPage() {
                   </div>
                 </div>
               ))}
-              
+
               {/* Loading indicator */}
               {isLoading && (
                 <div className="flex justify-start">
@@ -453,7 +594,22 @@ export default function AssistantPage() {
                   </div>
                 </div>
               )}
-              
+
+              {/* OCR Loading indicator */}
+              {isOCRLoading && (
+                <div className="flex justify-start">
+                  <div className="flex gap-3">
+                    <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
+                      <Bot className="h-4 w-4" />
+                    </div>
+                    <div className="bg-muted rounded-lg px-4 py-3 flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">Extracting text from image...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div ref={messagesEndRef} />
             </div>
           </div>
@@ -467,18 +623,40 @@ export default function AssistantPage() {
                   placeholder="Ask about stocks, news, Bursa announcements, economic data..."
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isLoading || isOCRLoading}
                   className="flex-1 h-12 rounded-lg border border-input bg-background px-4 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
+
+                {/* Hidden file input for OCR */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+
+                {/* OCR Upload Button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading || isOCRLoading}
+                  className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Upload image for OCR"
+                >
+                  {isOCRLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileImage className="h-5 w-5" />}
+                </button>
+
+                {/* Submit Button */}
                 <button
                   type="submit"
-                  disabled={isLoading || !input.trim()}
+                  disabled={isLoading || isOCRLoading || !input.trim()}
                   className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowUp className="h-5 w-5" />}
                 </button>
               </form>
-              
+
               {/* Quick suggestions */}
               <div className="flex flex-wrap gap-2 mt-3">
                 {[
@@ -491,7 +669,7 @@ export default function AssistantPage() {
                   <button
                     key={suggestion}
                     onClick={() => setInput(suggestion)}
-                    disabled={isLoading}
+                    disabled={isLoading || isOCRLoading}
                     className="px-3 py-1 text-xs bg-muted hover:bg-accent rounded-full transition-colors disabled:opacity-50"
                   >
                     {suggestion}
