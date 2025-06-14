@@ -66,10 +66,9 @@ export interface StockDataPoint {
     error?: string;
   }
   
-  // Props for the StockChart component (now purely for display)
+  // Props for the StockChart component - FIXED: Now matches the prop name used in your component
   export interface StockChartProps {
-    historicalData: HistoricalStockData; // Receives pre-fetched historical stock data
-    // Removed initialTicker, as it's no longer responsible for fetching
+    historicalData: HistoricalStockData; // This now matches what you're passing from the component
   }
   
   // Props for the EconomicChart component
@@ -111,4 +110,3 @@ export interface StockDataPoint {
     historicalEconomicData?: EconomicDataPoint[]; // Use the specific interface
     timestamp: Date;
   }
-  
